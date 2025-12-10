@@ -151,7 +151,8 @@ exports.handler = async (event) => {
     console.error('Error details:', {
       message: error.message,
       stack: error.stack,
-      name: error.name
+      name: error.name,
+      videoId: videoId
     });
     
     // Determine error type and return appropriate message
@@ -173,8 +174,9 @@ exports.handler = async (event) => {
       errorMessage = `Transcript error: ${error.message}`;
       statusCode = 404;
     } else {
-      // Include actual error for debugging
+      // Include actual error for debugging in production
       errorMessage = `Failed to fetch transcript: ${error.message}`;
+      console.error('Full error stack:', error.stack);
     }
     
     return {
@@ -183,7 +185,13 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         success: false,
         error: errorMessage,
-        debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+        videoId: videoId,
+        debug: {
+          message: error.message,
+          name: error.name,
+          // Include more debug info to help diagnose
+          errorType: error.constructor.name
+        }
       })
     };
   }
