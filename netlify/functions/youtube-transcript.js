@@ -1,5 +1,3 @@
-const { Innertube } = require('youtubei.js');
-
 /**
  * Extract YouTube video ID from various URL formats
  */
@@ -27,6 +25,8 @@ let youtube = null;
 
 async function getYouTubeClient() {
   if (!youtube) {
+    // Dynamic import for ES Module compatibility
+    const { Innertube } = await import('youtubei.js');
     youtube = await Innertube.create();
   }
   return youtube;
