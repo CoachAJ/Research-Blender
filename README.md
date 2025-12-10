@@ -12,7 +12,7 @@
 
 ## Architecture
 
-```
+```text
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │   React Frontend │────▶│  Vite Dev Server │────▶│  Python Backend  │
 │   (Port 3000)    │     │     (Proxy)      │     │   (Port 5000)    │
@@ -59,11 +59,13 @@ GEMINI_API_KEY=your_gemini_api_key_here
 ### Local Development
 
 **Start the App with Netlify Functions (Recommended):**
+
 ```bash
 npm run dev
 ```
 
 This will:
+
 - Start Vite dev server on port 8888
 - Enable Netlify Functions locally
 - Allow YouTube transcript fetching to work
@@ -71,6 +73,7 @@ This will:
 The app will be available at `http://localhost:8888`
 
 **Alternative - Frontend Only (YouTube transcripts won't work):**
+
 ```bash
 npm run dev:vite
 ```
