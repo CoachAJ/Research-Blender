@@ -56,20 +56,32 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ## Running the Application
 
-### Start Both Servers
+### Local Development
 
-**Terminal 1 - Python Backend:**
-```bash
-cd server
-python app.py
-```
-
-**Terminal 2 - Frontend:**
+**Start the Frontend:**
 ```bash
 npm run dev
 ```
 
 The app will be available at `http://localhost:3000`
+
+**Note**: YouTube transcript fetching works via Netlify Functions in production. For local development, you can either:
+- Use the Netlify CLI: `netlify dev` (recommended)
+- Or run the Python backend separately (see `server/` folder)
+
+### Production Deployment (Netlify)
+
+1. **Connect to Netlify**:
+   - Push code to GitHub
+   - Import repository in Netlify
+   - Netlify will auto-detect settings from `netlify.toml`
+
+2. **Deploy**:
+   - Build command: `npm run build`
+   - Publish directory: `dist`
+   - Functions directory: `netlify/functions`
+
+3. **Done!** YouTube transcripts will work automatically via serverless functions.
 
 ## How It Works
 

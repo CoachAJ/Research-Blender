@@ -10,14 +10,16 @@
   },
   "dependencies": {
     "@google/genai": "^1.32.0",
-    "react-markdown": "^10.1.0",
     "lucide-react": "^0.556.0",
     "react": "^19.2.1",
-    "react-dom": "^19.2.1"
+    "react-dom": "^19.2.1",
+    "react-markdown": "^10.1.0",
+    "youtube-transcript": "^1.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "netlify-cli": "^23.12.3",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
