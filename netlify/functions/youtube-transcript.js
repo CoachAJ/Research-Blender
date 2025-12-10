@@ -258,6 +258,106 @@ function parseTranscriptXml(transcriptXml) {
 }
 
 /**
+ * Fetch transcript from third-party APIs that have solved IP blocking
+ */
+async function fetchTranscriptFromThirdParty(videoId) {
+  const apis = [
+    // Supadata YouTube Transcript API (free tier available)
+    {
+      name: 'Supadata',
+      fetch: async () => {
+        const response = await fetch(`https://api.supadata.ai/v1/youtube/transcript?video_id=${videoId}&text=true`, {
+          headers: {
+            'Accept': 'application/json',
+          }
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        if (data.content) {
+          return {
+            segments: [{ start: 0, duration: 0, text: data.content }],
+            fullText: data.content
+          };
+        }
+        return null;
+      }
+    },
+    // youtubetranscript.com (scraping service)
+    {
+      name: 'YouTubeTranscript.com',
+      fetch: async () => {
+        const response = await fetch(`https://youtubetranscript.com/?server_vid2=${videoId}`);
+        if (!response.ok) return null;
+        const text = await response.text();
+        
+        // Parse the XML response
+        const segments = [];
+        const regex = /<text start="([^"]+)" dur="([^"]+)"[^>]*>([^<]*)<\/text>/g;
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+          segments.push({
+            start: parseFloat(match[1]),
+            duration: parseFloat(match[2]),
+            text: match[3]
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&#39;/g, "'")
+              .trim()
+          });
+        }
+        
+        if (segments.length > 0) {
+          return {
+            segments,
+            fullText: segments.map(s => s.text).join(' ')
+          };
+        }
+        return null;
+      }
+    },
+    // Tactiq transcript API
+    {
+      name: 'Tactiq',
+      fetch: async () => {
+        const response = await fetch(`https://tactiq-apps-prod.tactiq.io/transcript?videoId=${videoId}&langCode=en`);
+        if (!response.ok) return null;
+        const data = await response.json();
+        
+        if (data.captions && data.captions.length > 0) {
+          const segments = data.captions.map((c) => ({
+            start: c.start / 1000,
+            duration: c.dur / 1000,
+            text: c.text
+          }));
+          return {
+            segments,
+            fullText: segments.map(s => s.text).join(' ')
+          };
+        }
+        return null;
+      }
+    }
+  ];
+  
+  for (const api of apis) {
+    try {
+      console.log(`Trying ${api.name}...`);
+      const result = await api.fetch();
+      if (result && result.fullText && result.fullText.length > 50) {
+        console.log(`${api.name} succeeded: ${result.fullText.length} chars`);
+        return result;
+      }
+      console.log(`${api.name}: No valid transcript returned`);
+    } catch (error) {
+      console.log(`${api.name} error:`, error.message);
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Netlify Function Handler
  * Fetches YouTube transcript
  */
@@ -310,8 +410,36 @@ exports.handler = async (event) => {
 
     console.log(`Fetching transcript for video: ${videoId}`);
     
-    // Fetch transcript using direct method
-    const result = await fetchTranscriptDirect(videoId);
+    // Try multiple methods to fetch transcript
+    let result = null;
+    let lastError = null;
+    
+    // Method 1: Try third-party transcript APIs first (they have residential IPs)
+    try {
+      console.log('Method 1: Trying third-party APIs...');
+      result = await fetchTranscriptFromThirdParty(videoId);
+      if (result) {
+        console.log('Third-party API succeeded!');
+      }
+    } catch (e) {
+      console.log('Third-party APIs failed:', e.message);
+      lastError = e;
+    }
+    
+    // Method 2: Try direct YouTube API (may fail due to IP blocking)
+    if (!result) {
+      try {
+        console.log('Method 2: Trying direct YouTube API...');
+        result = await fetchTranscriptDirect(videoId);
+      } catch (e) {
+        console.log('Direct API failed:', e.message);
+        lastError = e;
+      }
+    }
+    
+    if (!result) {
+      throw lastError || new Error('All transcript fetch methods failed');
+    }
     
     console.log(`Successfully fetched transcript: ${result.segments.length} segments, ${result.fullText.length} chars`);
     
