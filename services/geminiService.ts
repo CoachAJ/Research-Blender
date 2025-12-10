@@ -97,13 +97,62 @@ const isYoutubeUrl = (url: string): boolean => {
 };
 
 /**
- * Fetches YouTube transcript via our Python backend
- * Falls back to external API if backend is unavailable (production)
- * Uses youtube-transcript-api which scrapes public transcripts
+ * Client-side YouTube transcript fetcher
+ * Fetches directly from user's browser to avoid cloud IP blocks
+ */
+
+// Innertube client configurations
+const INNERTUBE_CLIENTS = [
+  {
+    name: 'WEB',
+    context: {
+      client: {
+        clientName: 'WEB',
+        clientVersion: '2.20240313.05.00',
+        hl: 'en',
+        gl: 'US',
+      }
+    }
+  },
+  {
+    name: 'ANDROID',
+    context: {
+      client: {
+        clientName: 'ANDROID',
+        clientVersion: '19.30.36',
+        androidSdkVersion: 34,
+        hl: 'en',
+        gl: 'US',
+      }
+    }
+  }
+];
+
+/**
+ * Fetches YouTube transcript - tries client-side first, then server fallback
  */
 const fetchYoutubeTranscript = async (url: string): Promise<{ transcript: string; videoId: string } | null> => {
+  const videoId = extractVideoId(url);
+  if (!videoId) {
+    console.error('Could not extract video ID from URL:', url);
+    return null;
+  }
+
+  console.log('Fetching transcript for video:', videoId);
+
+  // Try client-side fetch first (uses user's IP, not blocked)
   try {
-    // Try local backend first
+    const result = await fetchTranscriptClientSide(videoId);
+    if (result) {
+      console.log('Client-side transcript fetch successful');
+      return result;
+    }
+  } catch (e) {
+    console.warn('Client-side transcript fetch failed:', e);
+  }
+
+  // Fallback to server-side (Netlify function)
+  try {
     const response = await fetch('/api/youtube/transcript', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -119,37 +168,112 @@ const fetchYoutubeTranscript = async (url: string): Promise<{ transcript: string
       };
     }
     
-    console.warn('Transcript fetch failed:', data.error);
-    return null;
+    console.warn('Server-side transcript fetch failed:', data.error);
   } catch (e) {
-    console.error('Error fetching YouTube transcript from backend, trying fallback:', e);
-    
-    // Fallback: Try external transcript API service
-    try {
-      const videoId = extractVideoId(url);
-      if (!videoId) return null;
-      
-      // Use a public CORS-enabled transcript API
-      const fallbackResponse = await fetch(`https://youtube-transcript-api.p.rapidapi.com/transcript?video_id=${videoId}`, {
-        method: 'GET',
-        headers: {
-          'X-RapidAPI-Key': 'DEMO', // User would need to add their own key
-          'X-RapidAPI-Host': 'youtube-transcript-api.p.rapidapi.com'
-        }
-      });
-      
-      if (fallbackResponse.ok) {
-        const fallbackData = await fallbackResponse.json();
-        const transcript = fallbackData.map((item: any) => item.text).join(' ');
-        return { transcript, videoId };
-      }
-    } catch (fallbackError) {
-      console.error('Fallback transcript fetch also failed:', fallbackError);
+    console.error('Server-side transcript fetch error:', e);
+  }
+
+  return null;
+};
+
+/**
+ * Fetch transcript directly from user's browser
+ * This bypasses cloud IP blocks since it uses the user's residential IP
+ */
+async function fetchTranscriptClientSide(videoId: string): Promise<{ transcript: string; videoId: string } | null> {
+  // Step 1: Fetch video page to get API key
+  // We use a CORS proxy or fetch the page directly
+  console.log('Step 1: Getting video info...');
+  
+  // Try to get captions from the video page HTML
+  try {
+    // Use YouTube's oEmbed endpoint to verify video exists (CORS-friendly)
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const oembedResponse = await fetch(oembedUrl);
+    if (!oembedResponse.ok) {
+      throw new Error('Video not found or unavailable');
     }
     
-    return null;
+    // Try the Innertube API directly from browser
+    // Note: This may be blocked by CORS, but worth trying
+    for (const client of INNERTUBE_CLIENTS) {
+      console.log(`Trying ${client.name} client...`);
+      
+      try {
+        const innertubeUrl = 'https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+        
+        const response = await fetch(innertubeUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            context: client.context,
+            videoId: videoId,
+          })
+        });
+        
+        if (!response.ok) continue;
+        
+        const data = await response.json();
+        
+        if (data.playabilityStatus?.status === 'OK' && data.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+          const captionTracks = data.captions.playerCaptionsTracklistRenderer.captionTracks;
+          console.log(`Found ${captionTracks.length} caption tracks`);
+          
+          // Find English or first available track
+          const track = captionTracks.find((t: any) => t.languageCode === 'en') || captionTracks[0];
+          
+          if (track?.baseUrl) {
+            // Fetch the actual transcript
+            const transcriptResponse = await fetch(track.baseUrl.replace('&fmt=srv3', ''));
+            if (transcriptResponse.ok) {
+              const transcriptXml = await transcriptResponse.text();
+              const transcript = parseTranscriptXml(transcriptXml);
+              if (transcript) {
+                return { transcript, videoId };
+              }
+            }
+          }
+        }
+      } catch (clientError) {
+        console.log(`${client.name} client failed:`, clientError);
+      }
+    }
+  } catch (error) {
+    console.error('Client-side fetch error:', error);
   }
-};
+  
+  return null;
+}
+
+/**
+ * Parse XML transcript into plain text
+ */
+function parseTranscriptXml(xml: string): string | null {
+  const segments: string[] = [];
+  const regex = /<text[^>]*>([\s\S]*?)<\/text>/g;
+  let match;
+  
+  while ((match = regex.exec(xml)) !== null) {
+    let text = match[1]
+      .replace(/<[^>]*>/g, '') // Remove nested tags
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\n/g, ' ')
+      .trim();
+    
+    if (text) {
+      segments.push(text);
+    }
+  }
+  
+  return segments.length > 0 ? segments.join(' ') : null;
+}
 
 /**
  * Extract video ID from YouTube URL
