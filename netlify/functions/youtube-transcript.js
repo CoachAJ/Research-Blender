@@ -20,16 +20,90 @@ function extractVideoId(url) {
   return null;
 }
 
-// Cache the Innertube instance
-let youtube = null;
-
-async function getYouTubeClient() {
-  if (!youtube) {
-    // Dynamic import for ES Module compatibility
-    const { Innertube } = await import('youtubei.js');
-    youtube = await Innertube.create();
+/**
+ * Fetch transcript using YouTube's timedtext API directly
+ */
+async function fetchTranscriptDirect(videoId) {
+  // First, get the video page to extract caption track info
+  const videoPageUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  
+  const response = await fetch(videoPageUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+    }
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to fetch video page: ${response.status}`);
   }
-  return youtube;
+  
+  const html = await response.text();
+  
+  // Extract captions data from the page
+  const captionsMatch = html.match(/"captions":\s*(\{[^}]+?"playerCaptionsTracklistRenderer"[^}]+?\})/);
+  
+  if (!captionsMatch) {
+    // Try alternative pattern
+    const altMatch = html.match(/\"captionTracks\":(\[.*?\])/);
+    if (!altMatch) {
+      throw new Error('No captions available for this video');
+    }
+    
+    try {
+      const captionTracks = JSON.parse(altMatch[1]);
+      if (captionTracks.length === 0) {
+        throw new Error('No caption tracks found');
+      }
+      
+      // Get the first available caption track (prefer English)
+      let track = captionTracks.find(t => t.languageCode === 'en') || captionTracks[0];
+      const captionUrl = track.baseUrl;
+      
+      // Fetch the actual transcript
+      const transcriptResponse = await fetch(captionUrl);
+      if (!transcriptResponse.ok) {
+        throw new Error(`Failed to fetch transcript: ${transcriptResponse.status}`);
+      }
+      
+      const transcriptXml = await transcriptResponse.text();
+      
+      // Parse XML transcript
+      const segments = [];
+      const textMatches = transcriptXml.matchAll(/<text start="([^"]+)" dur="([^"]+)"[^>]*>([^<]*)<\/text>/g);
+      
+      for (const match of textMatches) {
+        const start = parseFloat(match[1]);
+        const duration = parseFloat(match[2]);
+        // Decode HTML entities
+        let text = match[3]
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/\n/g, ' ')
+          .trim();
+        
+        if (text) {
+          segments.push({ start, duration, text });
+        }
+      }
+      
+      if (segments.length === 0) {
+        throw new Error('Could not parse transcript');
+      }
+      
+      return {
+        segments,
+        fullText: segments.map(s => s.text).join(' ')
+      };
+    } catch (e) {
+      throw new Error(`Failed to parse captions: ${e.message}`);
+    }
+  }
+  
+  throw new Error('Could not extract caption data from video page');
 }
 
 /**
@@ -37,14 +111,6 @@ async function getYouTubeClient() {
  * Fetches YouTube transcript
  */
 exports.handler = async (event) => {
-  // Only allow POST requests
-  if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
-      body: JSON.stringify({ success: false, error: 'Method Not Allowed' })
-    };
-  }
-
   // Enable CORS
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -55,13 +121,20 @@ exports.handler = async (event) => {
 
   // Handle OPTIONS request for CORS preflight
   if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 200, headers, body: '' };
+  }
+
+  // Only allow POST requests
+  if (event.httpMethod !== 'POST') {
     return {
-      statusCode: 200,
+      statusCode: 405,
       headers,
-      body: ''
+      body: JSON.stringify({ success: false, error: 'Method Not Allowed' })
     };
   }
 
+  let videoId = null;
+  
   try {
     // Parse request body
     const { url } = JSON.parse(event.body);
@@ -70,65 +143,26 @@ exports.handler = async (event) => {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({
-          success: false,
-          error: 'URL is required'
-        })
+        body: JSON.stringify({ success: false, error: 'URL is required' })
       };
     }
 
     // Extract video ID
-    const videoId = extractVideoId(url);
+    videoId = extractVideoId(url);
     if (!videoId) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({
-          success: false,
-          error: 'Invalid YouTube URL or video ID'
-        })
+        body: JSON.stringify({ success: false, error: 'Invalid YouTube URL or video ID' })
       };
     }
 
-    // Get YouTube client
-    const yt = await getYouTubeClient();
+    console.log(`Fetching transcript for video: ${videoId}`);
     
-    // Fetch video info
-    const info = await yt.getInfo(videoId);
+    // Fetch transcript using direct method
+    const result = await fetchTranscriptDirect(videoId);
     
-    // Get transcript
-    const transcriptData = await info.getTranscript();
-    
-    if (!transcriptData || !transcriptData.transcript) {
-      return {
-        statusCode: 404,
-        headers,
-        body: JSON.stringify({
-          success: false,
-          error: 'No transcript/captions found for this video'
-        })
-      };
-    }
-
-    // Extract transcript content
-    const segments = transcriptData.transcript.content.body.initial_segments;
-    
-    if (!segments || segments.length === 0) {
-      return {
-        statusCode: 404,
-        headers,
-        body: JSON.stringify({
-          success: false,
-          error: 'Transcript is empty'
-        })
-      };
-    }
-
-    // Combine all segments into full text
-    const fullTranscript = segments
-      .map(seg => seg.snippet?.text || '')
-      .filter(text => text.trim())
-      .join(' ');
+    console.log(`Successfully fetched transcript: ${result.segments.length} segments, ${result.fullText.length} chars`);
     
     // Return success response
     return {
@@ -137,46 +171,27 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         success: true,
         video_id: videoId,
-        transcript: fullTranscript,
-        segments: segments.map(seg => ({
-          start: seg.start_ms / 1000, // Convert to seconds
-          duration: seg.end_ms ? (seg.end_ms - seg.start_ms) / 1000 : 0,
-          text: seg.snippet?.text || ''
-        })).filter(seg => seg.text.trim())
+        transcript: result.fullText,
+        segments: result.segments
       })
     };
 
   } catch (error) {
-    console.error('Error fetching transcript:', error);
-    console.error('Error details:', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      videoId: videoId
-    });
+    console.error('Error fetching transcript:', error.message);
     
-    // Determine error type and return appropriate message
     let errorMessage = 'Could not fetch transcript';
     let statusCode = 500;
     
     const errorMsg = error.message?.toLowerCase() || '';
     
-    if (errorMsg.includes('disabled') || errorMsg.includes('subtitle')) {
-      errorMessage = 'Transcripts/captions are disabled for this video';
+    if (errorMsg.includes('no captions') || errorMsg.includes('no caption')) {
+      errorMessage = 'No captions/transcript available for this video';
       statusCode = 404;
-    } else if (errorMsg.includes('unavailable') || errorMsg.includes('private')) {
-      errorMessage = 'Video is unavailable or private';
-      statusCode = 404;
-    } else if (errorMsg.includes('not found') || errorMsg.includes('could not find')) {
-      errorMessage = 'No transcript/captions found for this video';
-      statusCode = 404;
-    } else if (errorMsg.includes('transcript')) {
-      errorMessage = `Transcript error: ${error.message}`;
+    } else if (errorMsg.includes('private') || errorMsg.includes('unavailable')) {
+      errorMessage = 'Video is private or unavailable';
       statusCode = 404;
     } else {
-      // Include actual error for debugging in production
       errorMessage = `Failed to fetch transcript: ${error.message}`;
-      console.error('Full error stack:', error.stack);
     }
     
     return {
@@ -185,13 +200,7 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         success: false,
         error: errorMessage,
-        videoId: videoId,
-        debug: {
-          message: error.message,
-          name: error.name,
-          // Include more debug info to help diagnose
-          errorType: error.constructor.name
-        }
+        videoId: videoId
       })
     };
   }
