@@ -98,16 +98,18 @@ const isYoutubeUrl = (url: string): boolean => {
 
 /**
  * Fetches YouTube transcript via our Python backend
+ * Falls back to external API if backend is unavailable (production)
  * Uses youtube-transcript-api which scrapes public transcripts
  */
 const fetchYoutubeTranscript = async (url: string): Promise<{ transcript: string; videoId: string } | null> => {
   try {
+    // Try local backend first
     const response = await fetch('/api/youtube/transcript', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
     });
-    
+
     const data = await response.json();
     
     if (data.success) {
@@ -120,9 +122,55 @@ const fetchYoutubeTranscript = async (url: string): Promise<{ transcript: string
     console.warn('Transcript fetch failed:', data.error);
     return null;
   } catch (e) {
-    console.error('Error fetching YouTube transcript:', e);
+    console.error('Error fetching YouTube transcript from backend, trying fallback:', e);
+    
+    // Fallback: Try external transcript API service
+    try {
+      const videoId = extractVideoId(url);
+      if (!videoId) return null;
+      
+      // Use a public CORS-enabled transcript API
+      const fallbackResponse = await fetch(`https://youtube-transcript-api.p.rapidapi.com/transcript?video_id=${videoId}`, {
+        method: 'GET',
+        headers: {
+          'X-RapidAPI-Key': 'DEMO', // User would need to add their own key
+          'X-RapidAPI-Host': 'youtube-transcript-api.p.rapidapi.com'
+        }
+      });
+      
+      if (fallbackResponse.ok) {
+        const fallbackData = await fallbackResponse.json();
+        const transcript = fallbackData.map((item: any) => item.text).join(' ');
+        return { transcript, videoId };
+      }
+    } catch (fallbackError) {
+      console.error('Fallback transcript fetch also failed:', fallbackError);
+    }
+    
     return null;
   }
+};
+
+/**
+ * Extract video ID from YouTube URL
+ */
+const extractVideoId = (url: string): string | null => {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^#&?]{11})/,
+    /(?:youtube\.com\/shorts\/)([^#&?]{11})/,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  
+  // Check if it's already just a video ID
+  if (/^[a-zA-Z0-9_-]{11}$/.test(url)) {
+    return url;
+  }
+  
+  return null;
 };
 
 /**
