@@ -58,16 +58,24 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ### Local Development
 
-**Start the Frontend:**
+**Start the App with Netlify Functions (Recommended):**
 ```bash
 npm run dev
 ```
 
-The app will be available at `http://localhost:3000`
+This will:
+- Start Vite dev server on port 8888
+- Enable Netlify Functions locally
+- Allow YouTube transcript fetching to work
 
-**Note**: YouTube transcript fetching works via Netlify Functions in production. For local development, you can either:
-- Use the Netlify CLI: `netlify dev` (recommended)
-- Or run the Python backend separately (see `server/` folder)
+The app will be available at `http://localhost:8888`
+
+**Alternative - Frontend Only (YouTube transcripts won't work):**
+```bash
+npm run dev:vite
+```
+
+This runs just the Vite server without functions support.
 
 ### Production Deployment (Netlify)
 
