@@ -21,10 +21,11 @@ function extractVideoId(url) {
 }
 
 // Innertube API configuration (from youtube-transcript-api Python library)
+// Using ANDROID client to avoid bot detection (same as Python library)
 const INNERTUBE_CONTEXT = {
   client: {
-    clientName: "WEB",
-    clientVersion: "2.20240313.05.00",
+    clientName: "ANDROID",
+    clientVersion: "20.10.38",
     hl: "en",
     gl: "US",
   }
