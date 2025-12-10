@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { ResearchSource, SourceType } from '../types';
 import * as GeminiService from '../services/geminiService';
+import YouTubeAuth from './YouTubeAuth';
 import { 
   Plus, Mic, StopCircle, Upload, Link as LinkIcon, FileText, 
   Youtube, Globe, Image, Video, Trash2, CheckCircle2, Loader2, 
@@ -18,8 +19,14 @@ const InputHopper: React.FC<InputHopperProps> = ({ sources, setSources }) => {
   const [urlInput, setUrlInput] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const [youtubeConnected, setYoutubeConnected] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Handle YouTube auth state changes
+  const handleYouTubeAuthChange = (token: string | null) => {
+    setYoutubeConnected(!!token);
+  };
 
   const addSource = (partialSource: Partial<ResearchSource>) => {
     const newSource: ResearchSource = {
@@ -299,9 +306,26 @@ const InputHopper: React.FC<InputHopperProps> = ({ sources, setSources }) => {
                 <Sparkles size={16} />
                 Fetch & Analyze
               </button>
-              <p className="text-xs text-slate-400 text-center">
-                YouTube videos will have their transcripts extracted automatically
-              </p>
+              
+              {/* YouTube OAuth Connection */}
+              <div className="pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-slate-500">YouTube Connection</span>
+                  {youtubeConnected && (
+                    <span className="text-xs text-emerald-600 flex items-center gap-1">
+                      <CheckCircle2 size={12} />
+                      Connected
+                    </span>
+                  )}
+                </div>
+                <YouTubeAuth onAuthChange={handleYouTubeAuthChange} />
+                <p className="text-xs text-slate-400 mt-2">
+                  {youtubeConnected 
+                    ? "Your YouTube account is connected for better transcript access"
+                    : "Connect your YouTube account for more reliable transcript fetching"
+                  }
+                </p>
+              </div>
             </div>
           )}
 
