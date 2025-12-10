@@ -20,16 +20,48 @@ function extractVideoId(url) {
   return null;
 }
 
-// Innertube API configuration (from youtube-transcript-api Python library)
-// Using ANDROID client to avoid bot detection (same as Python library)
-const INNERTUBE_CONTEXT = {
-  client: {
-    clientName: "ANDROID",
-    clientVersion: "20.10.38",
-    hl: "en",
-    gl: "US",
+// Multiple client configurations to try (in order of preference)
+const CLIENT_CONFIGS = [
+  // iOS client - often less restricted
+  {
+    context: {
+      client: {
+        clientName: "IOS",
+        clientVersion: "19.29.1",
+        deviceMake: "Apple",
+        deviceModel: "iPhone16,2",
+        hl: "en",
+        gl: "US",
+      }
+    },
+    userAgent: "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
+  },
+  // Android client - same as Python library
+  {
+    context: {
+      client: {
+        clientName: "ANDROID",
+        clientVersion: "19.30.36",
+        androidSdkVersion: 34,
+        hl: "en",
+        gl: "US",
+      }
+    },
+    userAgent: "com.google.android.youtube/19.30.36 (Linux; U; Android 14) gzip"
+  },
+  // TV HTML5 client - embedded player, sometimes less restricted
+  {
+    context: {
+      client: {
+        clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+        clientVersion: "2.0",
+        hl: "en",
+        gl: "US",
+      }
+    },
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
   }
-};
+];
 
 /**
  * Fetch transcript using YouTube's Innertube API
@@ -72,47 +104,70 @@ async function fetchTranscriptDirect(videoId) {
   }
   
   const apiKey = apiKeyMatch[1];
-  console.log('Step 2: Got API key, fetching innertube data...');
+  console.log('Step 2: Got API key, trying different client configurations...');
   
-  // Step 2: Call the Innertube API to get video data including captions
-  const innertubeUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}`;
+  // Step 2: Try each client configuration until one works
+  let innertubeData = null;
+  let lastError = null;
   
-  const innertubeResponse = await fetch(innertubeUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
-    body: JSON.stringify({
-      context: INNERTUBE_CONTEXT,
-      videoId: videoId,
-    })
-  });
-  
-  if (!innertubeResponse.ok) {
-    throw new Error(`Innertube API request failed: ${innertubeResponse.status}`);
+  for (let i = 0; i < CLIENT_CONFIGS.length; i++) {
+    const config = CLIENT_CONFIGS[i];
+    console.log(`Trying client ${i + 1}/${CLIENT_CONFIGS.length}: ${config.context.client.clientName}`);
+    
+    try {
+      const innertubeUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}`;
+      
+      const innertubeResponse = await fetch(innertubeUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': config.userAgent,
+          'X-Youtube-Client-Name': config.context.client.clientName === 'IOS' ? '5' : 
+                                   config.context.client.clientName === 'ANDROID' ? '3' : '85',
+          'X-Youtube-Client-Version': config.context.client.clientVersion,
+          'Origin': 'https://www.youtube.com',
+          'Referer': 'https://www.youtube.com/',
+        },
+        body: JSON.stringify({
+          context: config.context,
+          videoId: videoId,
+        })
+      });
+      
+      if (!innertubeResponse.ok) {
+        lastError = new Error(`Innertube API request failed: ${innertubeResponse.status}`);
+        continue;
+      }
+      
+      const data = await innertubeResponse.json();
+      
+      // Check playability status
+      const playabilityStatus = data.playabilityStatus?.status;
+      if (playabilityStatus === 'OK') {
+        // Check if we have captions
+        if (data.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+          innertubeData = data;
+          console.log(`Success with ${config.context.client.clientName} client!`);
+          break;
+        } else {
+          lastError = new Error('No captions available');
+        }
+      } else {
+        const reason = data.playabilityStatus?.reason || 'Unknown';
+        console.log(`${config.context.client.clientName} failed: ${playabilityStatus} - ${reason}`);
+        lastError = new Error(`${playabilityStatus}: ${reason}`);
+      }
+    } catch (err) {
+      console.log(`${config.context.client.clientName} error: ${err.message}`);
+      lastError = err;
+    }
   }
   
-  const innertubeData = await innertubeResponse.json();
+  if (!innertubeData) {
+    throw lastError || new Error('All client configurations failed');
+  }
+  
   console.log('Step 3: Got innertube data, extracting captions...');
-  
-  // Check playability status
-  const playabilityStatus = innertubeData.playabilityStatus?.status;
-  if (playabilityStatus !== 'OK') {
-    const reason = innertubeData.playabilityStatus?.reason || 'Unknown reason';
-    if (playabilityStatus === 'LOGIN_REQUIRED') {
-      if (reason.includes('bot')) {
-        throw new Error('Request blocked - bot detection');
-      }
-      if (reason.includes('inappropriate')) {
-        throw new Error('Video is age restricted');
-      }
-    }
-    if (playabilityStatus === 'ERROR') {
-      throw new Error(`Video unavailable: ${reason}`);
-    }
-    throw new Error(`Video not playable: ${reason}`);
-  }
   
   // Extract captions
   const captionsData = innertubeData.captions?.playerCaptionsTracklistRenderer;
