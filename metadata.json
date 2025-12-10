@@ -1,0 +1,7 @@
+{
+  "name": "Research Blender",
+  "description": "An AI-powered research synthesis engine that blends video, audio, text, and web sources into cohesive narratives with auto-generated visuals.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
