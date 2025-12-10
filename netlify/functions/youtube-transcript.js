@@ -64,10 +64,10 @@ const CLIENT_CONFIGS = [
 ];
 
 /**
- * Fetch transcript using YouTube's Innertube API
- * Based on the approach from youtube-transcript-api Python library
+ * Fetch transcript using YouTube's Innertube API with optional OAuth token
+ * When authenticated, requests are less likely to be blocked
  */
-async function fetchTranscriptDirect(videoId) {
+async function fetchTranscriptDirect(videoId, accessToken = null) {
   console.log('Step 1: Fetching video page to get API key...');
   
   // Step 1: Fetch the video page to get the INNERTUBE_API_KEY
@@ -105,6 +105,9 @@ async function fetchTranscriptDirect(videoId) {
   
   const apiKey = apiKeyMatch[1];
   console.log('Step 2: Got API key, trying different client configurations...');
+  if (accessToken) {
+    console.log('Using OAuth access token for authenticated requests');
+  }
   
   // Step 2: Try each client configuration until one works
   let innertubeData = null;
@@ -117,17 +120,25 @@ async function fetchTranscriptDirect(videoId) {
     try {
       const innertubeUrl = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}`;
       
+      // Build headers - add Authorization if we have an access token
+      const headers = {
+        'Content-Type': 'application/json',
+        'User-Agent': config.userAgent,
+        'X-Youtube-Client-Name': config.context.client.clientName === 'IOS' ? '5' : 
+                                 config.context.client.clientName === 'ANDROID' ? '3' : '85',
+        'X-Youtube-Client-Version': config.context.client.clientVersion,
+        'Origin': 'https://www.youtube.com',
+        'Referer': 'https://www.youtube.com/',
+      };
+      
+      // Add OAuth token if provided
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+      
       const innertubeResponse = await fetch(innertubeUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': config.userAgent,
-          'X-Youtube-Client-Name': config.context.client.clientName === 'IOS' ? '5' : 
-                                   config.context.client.clientName === 'ANDROID' ? '3' : '85',
-          'X-Youtube-Client-Version': config.context.client.clientVersion,
-          'Origin': 'https://www.youtube.com',
-          'Referer': 'https://www.youtube.com/',
-        },
+        headers,
         body: JSON.stringify({
           context: config.context,
           videoId: videoId,
@@ -388,7 +399,7 @@ exports.handler = async (event) => {
   
   try {
     // Parse request body
-    const { url } = JSON.parse(event.body);
+    const { url, accessToken } = JSON.parse(event.body);
     
     if (!url) {
       return {
@@ -409,27 +420,46 @@ exports.handler = async (event) => {
     }
 
     console.log(`Fetching transcript for video: ${videoId}`);
+    if (accessToken) {
+      console.log('OAuth access token provided - using authenticated requests');
+    }
     
     // Try multiple methods to fetch transcript
     let result = null;
     let lastError = null;
     
-    // Method 1: Try third-party transcript APIs first (they have residential IPs)
-    try {
-      console.log('Method 1: Trying third-party APIs...');
-      result = await fetchTranscriptFromThirdParty(videoId);
-      if (result) {
-        console.log('Third-party API succeeded!');
+    // Method 1: If we have an access token, try authenticated request first
+    if (accessToken) {
+      try {
+        console.log('Method 1: Trying authenticated YouTube API...');
+        result = await fetchTranscriptDirect(videoId, accessToken);
+        if (result) {
+          console.log('Authenticated API succeeded!');
+        }
+      } catch (e) {
+        console.log('Authenticated API failed:', e.message);
+        lastError = e;
       }
-    } catch (e) {
-      console.log('Third-party APIs failed:', e.message);
-      lastError = e;
     }
     
-    // Method 2: Try direct YouTube API (may fail due to IP blocking)
+    // Method 2: Try third-party transcript APIs (they have residential IPs)
     if (!result) {
       try {
-        console.log('Method 2: Trying direct YouTube API...');
+        console.log('Method 2: Trying third-party APIs...');
+        result = await fetchTranscriptFromThirdParty(videoId);
+        if (result) {
+          console.log('Third-party API succeeded!');
+        }
+      } catch (e) {
+        console.log('Third-party APIs failed:', e.message);
+        lastError = e;
+      }
+    }
+    
+    // Method 3: Try direct YouTube API without auth (may fail due to IP blocking)
+    if (!result) {
+      try {
+        console.log('Method 3: Trying direct YouTube API (unauthenticated)...');
         result = await fetchTranscriptDirect(videoId);
       } catch (e) {
         console.log('Direct API failed:', e.message);

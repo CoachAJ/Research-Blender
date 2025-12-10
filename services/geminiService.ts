@@ -97,8 +97,22 @@ const isYoutubeUrl = (url: string): boolean => {
 };
 
 /**
+ * Get YouTube access token from localStorage if available
+ */
+const getYouTubeAccessToken = (): string | null => {
+  const token = localStorage.getItem('youtube_access_token');
+  const expiry = localStorage.getItem('youtube_token_expiry');
+  
+  if (token && expiry && Date.now() < parseInt(expiry)) {
+    return token;
+  }
+  return null;
+};
+
+/**
  * Fetches YouTube transcript via Netlify function
  * The server tries multiple methods including third-party APIs
+ * If user is authenticated with YouTube, uses their credentials for better success rate
  */
 const fetchYoutubeTranscript = async (url: string): Promise<{ transcript: string; videoId: string } | null> => {
   const videoId = extractVideoId(url);
@@ -108,12 +122,18 @@ const fetchYoutubeTranscript = async (url: string): Promise<{ transcript: string
   }
 
   console.log('Fetching transcript for video:', videoId);
+  
+  // Get YouTube access token if user is authenticated
+  const accessToken = getYouTubeAccessToken();
+  if (accessToken) {
+    console.log('Using YouTube OAuth token for authenticated request');
+  }
 
   try {
     const response = await fetch('/api/youtube/transcript', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url, accessToken })
     });
 
     const data = await response.json();
