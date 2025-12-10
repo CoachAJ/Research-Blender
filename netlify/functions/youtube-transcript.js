@@ -269,6 +269,104 @@ function parseTranscriptXml(transcriptXml) {
 }
 
 /**
+ * Extract captions directly from YouTube video page HTML
+ * This method extracts the timedtext URL from the page and fetches captions directly
+ */
+async function fetchTranscriptFromPage(videoId) {
+  console.log('Trying to extract captions from video page HTML...');
+  
+  const videoPageUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  
+  const pageResponse = await fetch(videoPageUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Cookie': 'CONSENT=YES+cb.20210328-17-p0.en+FX+917'
+    }
+  });
+  
+  if (!pageResponse.ok) {
+    throw new Error(`Failed to fetch video page: ${pageResponse.status}`);
+  }
+  
+  const html = await pageResponse.text();
+  
+  // Try to find captions in the ytInitialPlayerResponse
+  const playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});(?:var|<\/script>)/s);
+  if (!playerResponseMatch) {
+    console.log('Could not find ytInitialPlayerResponse');
+    return null;
+  }
+  
+  try {
+    const playerResponse = JSON.parse(playerResponseMatch[1]);
+    const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    
+    if (!captions || captions.length === 0) {
+      console.log('No caption tracks found in player response');
+      return null;
+    }
+    
+    // Find English captions or use the first available
+    let captionTrack = captions.find(c => c.languageCode === 'en' || c.languageCode?.startsWith('en'));
+    if (!captionTrack) {
+      captionTrack = captions[0];
+    }
+    
+    console.log(`Found caption track: ${captionTrack.languageCode} - ${captionTrack.name?.simpleText || 'unnamed'}`);
+    
+    // Fetch the caption XML
+    const captionUrl = captionTrack.baseUrl;
+    const captionResponse = await fetch(captionUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      }
+    });
+    
+    if (!captionResponse.ok) {
+      console.log(`Failed to fetch caption XML: ${captionResponse.status}`);
+      return null;
+    }
+    
+    const captionXml = await captionResponse.text();
+    
+    // Parse the XML
+    const segments = [];
+    const regex = /<text start="([^"]+)" dur="([^"]+)"[^>]*>([^<]*)<\/text>/g;
+    let match;
+    while ((match = regex.exec(captionXml)) !== null) {
+      segments.push({
+        start: parseFloat(match[1]),
+        duration: parseFloat(match[2]),
+        text: match[3]
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&#39;/g, "'")
+          .replace(/&quot;/g, '"')
+          .replace(/\n/g, ' ')
+          .trim()
+      });
+    }
+    
+    if (segments.length > 0) {
+      console.log(`Successfully extracted ${segments.length} caption segments from page`);
+      return {
+        segments,
+        fullText: segments.map(s => s.text).join(' ')
+      };
+    }
+    
+    return null;
+  } catch (e) {
+    console.log('Error parsing player response:', e.message);
+    return null;
+  }
+}
+
+/**
  * Fetch transcript from third-party APIs that have solved IP blocking
  */
 async function fetchTranscriptFromThirdParty(videoId) {
@@ -420,26 +518,21 @@ exports.handler = async (event) => {
     }
 
     console.log(`Fetching transcript for video: ${videoId}`);
-    if (accessToken) {
-      console.log('OAuth access token provided - using authenticated requests');
-    }
     
     // Try multiple methods to fetch transcript
     let result = null;
     let lastError = null;
     
-    // Method 1: If we have an access token, try authenticated request first
-    if (accessToken) {
-      try {
-        console.log('Method 1: Trying authenticated YouTube API...');
-        result = await fetchTranscriptDirect(videoId, accessToken);
-        if (result) {
-          console.log('Authenticated API succeeded!');
-        }
-      } catch (e) {
-        console.log('Authenticated API failed:', e.message);
-        lastError = e;
+    // Method 1: Try extracting captions directly from video page HTML (most reliable)
+    try {
+      console.log('Method 1: Trying to extract captions from video page...');
+      result = await fetchTranscriptFromPage(videoId);
+      if (result) {
+        console.log('Page extraction succeeded!');
       }
+    } catch (e) {
+      console.log('Page extraction failed:', e.message);
+      lastError = e;
     }
     
     // Method 2: Try third-party transcript APIs (they have residential IPs)
@@ -456,13 +549,13 @@ exports.handler = async (event) => {
       }
     }
     
-    // Method 3: Try direct YouTube API without auth (may fail due to IP blocking)
+    // Method 3: Try direct Innertube API (may fail due to IP blocking)
     if (!result) {
       try {
-        console.log('Method 3: Trying direct YouTube API (unauthenticated)...');
+        console.log('Method 3: Trying direct Innertube API...');
         result = await fetchTranscriptDirect(videoId);
       } catch (e) {
-        console.log('Direct API failed:', e.message);
+        console.log('Innertube API failed:', e.message);
         lastError = e;
       }
     }
