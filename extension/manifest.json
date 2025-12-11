@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Research Blender - YouTube Transcripts",
+  "version": "1.0.0",
+  "description": "Fetches YouTube transcripts for Research Blender app",
+  "permissions": [],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "https://youtube.com/*"
+  ],
+  "externally_connectable": {
+    "matches": [
+      "https://fastidious-bunny-9a31b3.netlify.app/*",
+      "http://localhost:*/*",
+      "http://127.0.0.1:*/*"
+    ]
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

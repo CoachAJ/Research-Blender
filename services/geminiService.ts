@@ -97,22 +97,88 @@ const isYoutubeUrl = (url: string): boolean => {
 };
 
 /**
- * Get YouTube access token from localStorage if available
+ * Chrome Extension ID for Research Blender YouTube Transcript Extension
+ * Users need to install the extension and update this ID
  */
-const getYouTubeAccessToken = (): string | null => {
-  const token = localStorage.getItem('youtube_access_token');
-  const expiry = localStorage.getItem('youtube_token_expiry');
-  
-  if (token && expiry && Date.now() < parseInt(expiry)) {
-    return token;
+const EXTENSION_ID = localStorage.getItem('research_blender_extension_id') || '';
+
+/**
+ * Check if the browser extension is installed and available
+ */
+const checkExtensionAvailable = async (): Promise<boolean> => {
+  if (!EXTENSION_ID || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
+    return false;
   }
-  return null;
+  
+  try {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(false), 1000);
+      
+      chrome.runtime.sendMessage(EXTENSION_ID, { action: 'ping' }, (response) => {
+        clearTimeout(timeout);
+        if (chrome.runtime.lastError) {
+          console.log('Extension not available:', chrome.runtime.lastError.message);
+          resolve(false);
+        } else {
+          console.log('Extension available:', response);
+          resolve(response?.success === true);
+        }
+      });
+    });
+  } catch (e) {
+    return false;
+  }
 };
 
 /**
- * Fetches YouTube transcript via Netlify function
- * The server tries multiple methods including third-party APIs
- * If user is authenticated with YouTube, uses their credentials for better success rate
+ * Fetch transcript via browser extension (uses user's residential IP)
+ */
+const fetchTranscriptViaExtension = async (videoId: string): Promise<{ transcript: string; videoId: string } | null> => {
+  if (!EXTENSION_ID) {
+    console.log('Extension ID not configured');
+    return null;
+  }
+  
+  try {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        console.log('Extension request timed out');
+        resolve(null);
+      }, 30000); // 30 second timeout
+      
+      chrome.runtime.sendMessage(
+        EXTENSION_ID,
+        { action: 'getTranscript', videoId },
+        (response) => {
+          clearTimeout(timeout);
+          
+          if (chrome.runtime.lastError) {
+            console.error('Extension error:', chrome.runtime.lastError.message);
+            resolve(null);
+            return;
+          }
+          
+          if (response?.success) {
+            console.log('Extension fetched transcript:', response.transcript.length, 'chars');
+            resolve({
+              transcript: response.transcript,
+              videoId: response.videoId
+            });
+          } else {
+            console.warn('Extension failed:', response?.error);
+            resolve(null);
+          }
+        }
+      );
+    });
+  } catch (e) {
+    console.error('Extension communication error:', e);
+    return null;
+  }
+};
+
+/**
+ * Fetches YouTube transcript - tries extension first, then server fallback
  */
 const fetchYoutubeTranscript = async (url: string): Promise<{ transcript: string; videoId: string } | null> => {
   const videoId = extractVideoId(url);
@@ -123,33 +189,42 @@ const fetchYoutubeTranscript = async (url: string): Promise<{ transcript: string
 
   console.log('Fetching transcript for video:', videoId);
   
-  // Get YouTube access token if user is authenticated
-  const accessToken = getYouTubeAccessToken();
-  if (accessToken) {
-    console.log('Using YouTube OAuth token for authenticated request');
+  // Method 1: Try browser extension first (most reliable - uses user's IP)
+  const extensionAvailable = await checkExtensionAvailable();
+  if (extensionAvailable) {
+    console.log('Trying browser extension...');
+    const extensionResult = await fetchTranscriptViaExtension(videoId);
+    if (extensionResult) {
+      console.log('Extension succeeded!');
+      return extensionResult;
+    }
+    console.log('Extension failed, trying server fallback...');
+  } else {
+    console.log('Extension not available, using server...');
   }
 
+  // Method 2: Fall back to server-side fetching
   try {
     const response = await fetch('/api/youtube/transcript', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, accessToken })
+      body: JSON.stringify({ url })
     });
 
     const data = await response.json();
     
     if (data.success) {
-      console.log('Transcript fetch successful:', data.transcript.length, 'chars');
+      console.log('Server fetch successful:', data.transcript.length, 'chars');
       return {
         transcript: data.transcript,
         videoId: data.video_id
       };
     }
     
-    console.warn('Transcript fetch failed:', data.error);
+    console.warn('Server fetch failed:', data.error);
     return null;
   } catch (e) {
-    console.error('Transcript fetch error:', e);
+    console.error('Server fetch error:', e);
     return null;
   }
 };

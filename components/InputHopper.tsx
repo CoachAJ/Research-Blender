@@ -1,11 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ResearchSource, SourceType } from '../types';
 import * as GeminiService from '../services/geminiService';
-import YouTubeAuth from './YouTubeAuth';
 import { 
   Plus, Mic, StopCircle, Upload, Link as LinkIcon, FileText, 
   Youtube, Globe, Image, Video, Trash2, CheckCircle2, Loader2, 
-  AlertCircle, ChevronDown, ChevronUp, Sparkles
+  AlertCircle, ChevronDown, ChevronUp, Sparkles, Puzzle, Settings
 } from 'lucide-react';
 
 interface InputHopperProps {
@@ -19,13 +18,44 @@ const InputHopper: React.FC<InputHopperProps> = ({ sources, setSources }) => {
   const [urlInput, setUrlInput] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
-  const [youtubeConnected, setYoutubeConnected] = useState(false);
+  const [extensionId, setExtensionId] = useState(localStorage.getItem('research_blender_extension_id') || '');
+  const [extensionStatus, setExtensionStatus] = useState<'unknown' | 'connected' | 'not-found'>('unknown');
+  const [showExtensionSetup, setShowExtensionSetup] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Handle YouTube auth state changes
-  const handleYouTubeAuthChange = (token: string | null) => {
-    setYoutubeConnected(!!token);
+  // Check extension status on mount and when ID changes
+  useEffect(() => {
+    checkExtensionStatus();
+  }, [extensionId]);
+
+  const checkExtensionStatus = async () => {
+    if (!extensionId) {
+      setExtensionStatus('unknown');
+      return;
+    }
+
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage(extensionId, { action: 'ping' }, (response) => {
+          if (chrome.runtime.lastError || !response?.success) {
+            setExtensionStatus('not-found');
+          } else {
+            setExtensionStatus('connected');
+          }
+        });
+      } else {
+        setExtensionStatus('not-found');
+      }
+    } catch {
+      setExtensionStatus('not-found');
+    }
+  };
+
+  const saveExtensionId = () => {
+    localStorage.setItem('research_blender_extension_id', extensionId);
+    checkExtensionStatus();
+    setShowExtensionSetup(false);
   };
 
   const addSource = (partialSource: Partial<ResearchSource>) => {
@@ -307,22 +337,65 @@ const InputHopper: React.FC<InputHopperProps> = ({ sources, setSources }) => {
                 Fetch & Analyze
               </button>
               
-              {/* YouTube OAuth Connection */}
+              {/* Extension Status */}
               <div className="pt-2 border-t border-slate-100">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-slate-500">YouTube Connection</span>
-                  {youtubeConnected && (
+                  <span className="text-xs text-slate-500 flex items-center gap-1">
+                    <Puzzle size={12} />
+                    YouTube Extension
+                  </span>
+                  {extensionStatus === 'connected' && (
                     <span className="text-xs text-emerald-600 flex items-center gap-1">
                       <CheckCircle2 size={12} />
                       Connected
                     </span>
                   )}
+                  {extensionStatus === 'not-found' && (
+                    <span className="text-xs text-amber-600 flex items-center gap-1">
+                      <AlertCircle size={12} />
+                      Not Found
+                    </span>
+                  )}
                 </div>
-                <YouTubeAuth onAuthChange={handleYouTubeAuthChange} />
+                
+                {showExtensionSetup ? (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      className="w-full p-2 text-xs rounded-lg border border-slate-200 bg-slate-50"
+                      placeholder="Paste Extension ID here..."
+                      value={extensionId}
+                      onChange={(e) => setExtensionId(e.target.value)}
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={saveExtensionId}
+                        className="flex-1 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setShowExtensionSetup(false)}
+                        className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowExtensionSetup(true)}
+                    className="w-full flex items-center justify-center gap-2 py-2 text-xs text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                  >
+                    <Settings size={14} />
+                    {extensionId ? 'Change Extension ID' : 'Setup Extension'}
+                  </button>
+                )}
+                
                 <p className="text-xs text-slate-400 mt-2">
-                  {youtubeConnected 
-                    ? "Your YouTube account is connected for better transcript access"
-                    : "Connect your YouTube account for more reliable transcript fetching"
+                  {extensionStatus === 'connected' 
+                    ? "Extension connected - YouTube transcripts will be fetched reliably"
+                    : "Install the extension for reliable YouTube transcript fetching"
                   }
                 </p>
               </div>
