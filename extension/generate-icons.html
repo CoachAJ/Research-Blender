@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Generate Extension Icons</title>
+</head>
+<body>
+  <h1>Right-click each icon and "Save image as..."</h1>
+  <p>Save them to the extension folder with the correct names.</p>
+  
+  <h2>icon16.png</h2>
+  <canvas id="icon16" width="16" height="16"></canvas>
+  
+  <h2>icon48.png</h2>
+  <canvas id="icon48" width="48" height="48"></canvas>
+  
+  <h2>icon128.png</h2>
+  <canvas id="icon128" width="128" height="128"></canvas>
+
+  <script>
+    function drawIcon(canvasId, size) {
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas.getContext('2d');
+      
+      // Background - brand purple
+      ctx.fillStyle = '#6366f1';
+      ctx.beginPath();
+      ctx.arc(size/2, size/2, size/2, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // YouTube play triangle - white
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      const padding = size * 0.3;
+      const triangleSize = size - padding * 2;
+      ctx.moveTo(padding + triangleSize * 0.2, padding);
+      ctx.lineTo(padding + triangleSize * 0.2, padding + triangleSize);
+      ctx.lineTo(padding + triangleSize, padding + triangleSize / 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+    
+    drawIcon('icon16', 16);
+    drawIcon('icon48', 48);
+    drawIcon('icon128', 128);
+  </script>
+</body>
+</html>
